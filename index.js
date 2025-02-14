@@ -1,5 +1,6 @@
 const express = require('express'); 
 const app = express();
+const jwt = require('jsonwebtoken');
 require('dotenv').config()
 
 const cors = require('cors');
@@ -10,6 +11,25 @@ const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+const verifyToken = (req,res,next) =>{
+  console.log( "inside verify token " , req.headers.authorization)
+
+  if(!req.headers.authorization){
+    return res.status(401).send({message: 'forbidden access'})
+  }
+
+  const token = req.headers.authorization.split(' ')[1];
+  jwt.verify(token, process.env.JWT_SECRET, (err,decoded) => {
+    if(err) {
+      return res.status(401).send({message: 'forbidden access'})
+    }
+    req.decoded = decoded;
+    
+    next()
+  })
+
+}
 
 
 
@@ -36,6 +56,16 @@ async function run() {
     const reviewsCollection = client.db("MasterCafedb").collection("reviews");
     const cartCollection = client.db("MasterCafedb").collection("carts");
 
+    // Create token:
+
+    app.post('/jwt', (req,res) =>{
+      const user = req.body;
+      const token = jwt.sign(user, process.env.JWT_SECRET, {expiresIn: '1h'});
+      res.send({token})
+    })
+    
+
+    // 
 
     // user related apis:
 
@@ -50,9 +80,25 @@ async function run() {
       res.send(result)
     });
 
-    app.get('/users', async(req,res) => {
+    app.get('/users',verifyToken, async(req,res) => {
       const result = await userCollection.find().toArray();
       res.send(result)
+    });
+
+    // verify admin : 
+
+    app.get('/users/admin/:email',verifyToken, async(req,res) => {
+      const email = req.params.email;
+      if(email !== req.decoded.email){
+        return res.status(403).send({message: 'unAuthorized access'})
+      }
+      const query = {email : email}
+      const user = await userCollection.findOne(query);
+      let admin = false;
+      if(user){
+        admin = user?.role === "admin"
+      }
+      res.send({admin})
     })
 
 
@@ -91,7 +137,6 @@ async function run() {
     // cart collection 
     app.post('/carts', async(req,res) => {
       const cartItem = req.body;
-      console.log(req.body)
       const result = await cartCollection.insertOne(cartItem);
       res.send(result)
     })
